@@ -38,4 +38,4 @@ Standard Chromium command-line switches can also be forwarded directly.
 2. Generate the Visual Studio 2022 solution for 32-bit Windows: `cmake -G "Visual Studio 17" -A Win32 ..`
 3. Compile the Release build: `cmake --build . --config Release`
 
-CMake will download and unpack the prebuilt CEF distribution automatically during configuration. You can also open build\cef.sln directly in Visual Studio to build or debug. 
+CMake will download and unpack the prebuilt CEF distribution automatically during configuration. You can also open build\ChromiumAirlocked.sln directly in Visual Studio to build or debug. 
