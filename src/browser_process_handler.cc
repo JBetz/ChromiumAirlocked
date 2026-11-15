@@ -94,13 +94,12 @@ void BrowserProcessHandler::OnContextInitialized() {
 
   CefServer::CreateServer("127.0.0.1", static_cast<uint16_t>(serverPort), 10,
                           this);
-  LOG(INFO) << "Starting WebSocket server on port " << serverPort;
+  this->SendLogMessage(LOGSEVERITY_INFO, "Starting WebSocket server on port " + std::to_string(serverPort));
 }
 
 void BrowserProcessHandler::OnServerCreated(CefRefPtr<CefServer> server_) {
   this->server = server_;
-  LOG(INFO) << "WebSocket server listening on "
-            << server->GetAddress().ToString();
+  this->SendLogMessage(LOGSEVERITY_INFO, "WebSocket server listening on " + server->GetAddress().ToString());
 
   if (serverReadyEventName.has_value()) {
     HANDLE hEvent =
@@ -114,19 +113,20 @@ void BrowserProcessHandler::OnServerCreated(CefRefPtr<CefServer> server_) {
 }
 
 void BrowserProcessHandler::OnServerDestroyed(CefRefPtr<CefServer> server_) {
-  LOG(INFO) << "WebSocket server destroyed";
+  this->SendLogMessage(LOGSEVERITY_INFO, "WebSocket server destroyed");
   this->server = nullptr;
   this->activeConnectionId.reset();
 }
 
 void BrowserProcessHandler::OnClientConnected(CefRefPtr<CefServer> server_,
                                               int connection_id) {
-  LOG(INFO) << "TCP client connected: connection_id=" << connection_id;
+  this->SendLogMessage(LOGSEVERITY_INFO, "TCP client connected: connection_id=" + std::to_string(connection_id));
 }
 
 void BrowserProcessHandler::OnClientDisconnected(CefRefPtr<CefServer> server_,
                                                  int connection_id) {
-  LOG(INFO) << "Client disconnected: connection_id=" << connection_id;
+  this->SendLogMessage(LOGSEVERITY_INFO, "Client disconnected: connection_id=" +
+                                             std::to_string(connection_id));
   if (activeConnectionId.has_value() &&
       activeConnectionId.value() == connection_id) {
     activeConnectionId.reset();
@@ -149,9 +149,9 @@ void BrowserProcessHandler::OnWebSocketRequest(
     CefRefPtr<CefCallback> callback) {
   // Enforce single-client controller policy.
   if (activeConnectionId.has_value()) {
-    LOG(WARNING) << "Rejecting connection from " << client_address.ToString()
-                 << ": host client already connected (id="
-                 << *activeConnectionId << ")";
+    this->SendLogMessage(LOGSEVERITY_WARNING, "Rejecting WebSocket connection from " + client_address.ToString() +
+                                             ": host client already connected (id=" +
+                             std::to_string(*activeConnectionId) + ")");
     callback->Cancel();
     return;
   }
@@ -161,8 +161,10 @@ void BrowserProcessHandler::OnWebSocketRequest(
 void BrowserProcessHandler::OnWebSocketConnected(CefRefPtr<CefServer> server_,
                                                  int connection_id) {
   activeConnectionId = connection_id;
-  LOG(INFO) << "WebSocket client connected successfully: connection_id="
-            << connection_id;
+  this->SendLogMessage(
+      LOGSEVERITY_INFO,
+      "WebSocket client connected successfully: connection_id=" +
+          std::to_string(connection_id));
 }
 
 void BrowserProcessHandler::OnWebSocketMessage(CefRefPtr<CefServer> server_,
@@ -177,14 +179,15 @@ void BrowserProcessHandler::OnWebSocketMessage(CefRefPtr<CefServer> server_,
   CefRefPtr<CefValue> jsonMessage = CefParseJSONAndReturnError(
       jsonStr, JSON_PARSER_ALLOW_TRAILING_COMMAS, errorMessageOut);
   if (!jsonMessage) {
-    LOG(ERROR) << "OnWebSocketMessage: JSON parse error: "
-               << errorMessageOut.ToString();
+    this->SendLogMessage(LOGSEVERITY_ERROR, "OnWebSocketMessage: JSON parse error: " + errorMessageOut.ToString());
     return;
   }
   CefRefPtr<CefDictionaryValue> jsonMessageDictionary =
       jsonMessage->GetDictionary();
   if (!jsonMessageDictionary) {
-    LOG(ERROR) << "OnWebSocketMessage: Root JSON value is not a dictionary";
+    this->SendLogMessage(
+        LOGSEVERITY_ERROR,
+        "OnWebSocketMessage: Root JSON value is not a dictionary");
     return;
   }
   try {
@@ -205,7 +208,7 @@ void BrowserProcessHandler::OnWebSocketMessage(CefRefPtr<CefServer> server_,
                              arguments);
     }
   } catch (const std::exception& e) {
-    LOG(ERROR) << "OnWebSocketMessage: exception during dispatch: " << e.what();
+    this->SendLogMessage(LOGSEVERITY_ERROR, "OnWebSocketMessage: exception during dispatch: " + std::string(e.what()));
   }
 }
 
@@ -292,10 +295,12 @@ void BrowserProcessHandler::Shutdown() {
   isShuttingDown = true;
   std::lock_guard<std::mutex> lock(entriesMutex);
   if (browserEntries.empty()) {
-    LOG(INFO) << "No browser entries during shutdown.";
+    this->SendLogMessage(LOGSEVERITY_INFO, "No browser entries during shutdown.";
     CefQuitMessageLoop();
   } else {
-    LOG(INFO) << browserEntries.size() << " browser entries during shutdown.";
+    this->SendLogMessage(LOGSEVERITY_INFO,
+                         "Closing " + std::to_string(browserEntries.size()) +
+                             " browser entries during shutdown.");
     for (const auto& [id, entry] : browserEntries) {
       entry.second->GetHost()->CloseBrowser(true);
     }
@@ -326,7 +331,7 @@ void BrowserProcessHandler::GetBrowserFrameRate(
 
 void BrowserProcessHandler::SendMessage(const CefString& payload) {
   if (!server || !activeConnectionId.has_value()) {
-    LOG(WARNING) << "Cannot send WebSocket message: no active connection";
+    this->SendLogMessage(LOGSEVERITY_WARNING, "Cannot send WebSocket message: no active connection");
     return;
   }
 
@@ -431,8 +436,9 @@ void BrowserProcessHandler::SendLogMessage(const cef_log_severity_t severity,
     LOG(FATAL) << message;
   }
   auto arguments = CefDictionaryValue::Create();
-  arguments->SetInt("severity", severity);
   arguments->SetString("message", message);
+  arguments->SetInt("severity", severity);
+  arguments->SetString("process", "Browser");
   this->SendRequest("Client", 1, "OnLogMessage", arguments);
 }
 
@@ -551,8 +557,7 @@ void BrowserProcessHandler::HandleRpcResponse(const CefString& requestId,
     if (success) {
       callback(result);
     } else {
-      LOG(ERROR) << "RPC response error for request: "
-                 << (error ? error->GetString() : CefString("unknown error"));
+      this->SendErrorResponse(requestId, "RPC response error for request: " + (error ? error->GetString() : CefString("unknown error")));
     }
   }
 }
