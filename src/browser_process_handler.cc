@@ -295,7 +295,7 @@ void BrowserProcessHandler::Shutdown() {
   isShuttingDown = true;
   std::lock_guard<std::mutex> lock(entriesMutex);
   if (browserEntries.empty()) {
-    this->SendLogMessage(LOGSEVERITY_INFO, "No browser entries during shutdown.";
+    this->SendLogMessage(LOGSEVERITY_INFO, "No browser entries during shutdown.");
     CefQuitMessageLoop();
   } else {
     this->SendLogMessage(LOGSEVERITY_INFO,
@@ -557,7 +557,8 @@ void BrowserProcessHandler::HandleRpcResponse(const CefString& requestId,
     if (success) {
       callback(result);
     } else {
-      this->SendErrorResponse(requestId, "RPC response error for request: " + (error ? error->GetString() : CefString("unknown error")));
+      auto message = error ? error->GetString() : CefString("unknown error"); 
+      this->SendErrorResponse(requestId, "RPC response error for request: " + message.ToString());
     }
   }
 }
