@@ -140,8 +140,6 @@ int APIENTRY wWinMain(HINSTANCE hInstance,
   settings.windowless_rendering_enabled = true;
   std::filesystem::path cache_path = std::filesystem::current_path() / "cache";
   CefString(&settings.cache_path) = cache_path;
-  std::filesystem::path log_file = std::filesystem::current_path() / "chromium.log";
-  CefString(&settings.log_file) = log_file;
   settings.persist_session_cookies = true;
 
   // Initialize the CEF browser process. The first browser instance will be
