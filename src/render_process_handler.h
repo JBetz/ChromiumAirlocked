@@ -9,11 +9,46 @@
 
 #include "process_handler.h"
 
+struct NavigationSource {
+  std::string frameId;
+  bool isMainFrame = false;
+};
+
+struct NavigationTransition {
+  std::string type;  // "push", "replace", "traverse", "reload"
+  bool userInitiated = false;
+  bool hashChange = false;
+  int delta = 0;             // -1, 1, or explicit delta
+  std::string key;           // target key for traverseTo
+  CefRefPtr<CefValue> info;  // any serializable value
+};
+
+struct NavigationDestination {
+  std::string url;
+  bool sameDocument = false;
+  std::string key;
+  std::string id;
+  int index = -1;
+  CefRefPtr<CefValue> state;
+};
+
+struct NavigationEvent {
+  NavigationSource source;
+  NavigationTransition transition;
+  std::optional<NavigationDestination> destination;
+};
+
 // Client app implementation for the renderer process.
 class RenderProcessHandler : public ProcessHandler,
                              public CefRenderProcessHandler {
  public:
   RenderProcessHandler();
+
+  void SendLogMessage(CefRefPtr<CefFrame> frame,
+                      const cef_log_severity_t severity,
+                      const CefString& message);
+  void SendNavigationEvent(CefRefPtr<CefFrame> frame,
+                           const NavigationEvent& data);
 
  private:
   // CefApp methods.
@@ -24,7 +59,6 @@ class RenderProcessHandler : public ProcessHandler,
   void OnBrowserCreated(CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefDictionaryValue> extra_info) override;
   void OnBrowserDestroyed(CefRefPtr<CefBrowser> browser) override;
-  CefRefPtr<CefLoadHandler> GetLoadHandler() override;
   void OnContextCreated(CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefFrame> frame,
                         CefRefPtr<CefV8Context> context) override;

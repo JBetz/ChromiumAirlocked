@@ -21,6 +21,107 @@ const char kOnEvalMessage[] = "RenderProcessHandler.OnEval";
 
 RenderProcessHandler::RenderProcessHandler() {}
 
+void RenderProcessHandler::SendLogMessage(CefRefPtr<CefFrame> frame,
+                                          const cef_log_severity_t severity,
+                                          const CefString& message) {
+  if (!frame)
+    return;
+
+  if (severity == LOGSEVERITY_DEFAULT || severity == LOGSEVERITY_VERBOSE ||
+      severity == LOGSEVERITY_INFO) {
+    LOG(INFO) << message;
+  } else if (severity == LOGSEVERITY_WARNING) {
+    LOG(WARNING) << message;
+  } else if (severity == LOGSEVERITY_ERROR) {
+    LOG(ERROR) << message;
+  } else if (severity == LOGSEVERITY_FATAL) {
+    LOG(FATAL) << message;
+  }
+
+  // Package as an OnLogMessage notification to the host
+  auto request = CefDictionaryValue::Create();
+  request->SetString("id", uuid_to_string(CreateUuid()));
+  request->SetString("class", "Browser");
+  request->SetString("method", "OnLogMessage");
+  request->SetInt("instanceId", frame->GetBrowser()->GetIdentifier());
+
+  auto arguments = CefDictionaryValue::Create();
+  arguments->SetInt("severity", severity);
+  arguments->SetString("message", message);
+  arguments->SetString("process", "Renderer");
+  request->SetDictionary("arguments", arguments);
+
+  auto json = CefValue::Create();
+  json->SetDictionary(request);
+
+  auto processMessage =
+      CefProcessMessage::Create("RenderProcessHandler.OnLogMessage");
+  processMessage->GetArgumentList()->SetValue(0, json);
+  frame->SendProcessMessage(PID_BROWSER, processMessage);
+}
+
+void RenderProcessHandler::SendNavigationEvent(CefRefPtr<CefFrame> frame,
+                                               const NavigationEvent& event) {
+  CefRefPtr<CefDictionaryValue> request = CefDictionaryValue::Create();
+  request->SetString("id", uuid_to_string(CreateUuid()));
+  request->SetString("class", "Browser");
+  request->SetString("method", "OnNavigate");
+  request->SetInt("instanceId", frame->GetBrowser()->GetIdentifier());
+
+  CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();
+
+  CefRefPtr<CefDictionaryValue> sourceDict = CefDictionaryValue::Create();
+  sourceDict->SetString("frameId", event.source.frameId);
+  sourceDict->SetBool("isMainFrame", event.source.isMainFrame);
+  args->SetDictionary("source", sourceDict);
+
+  CefRefPtr<CefDictionaryValue> transitionDict = CefDictionaryValue::Create();
+  transitionDict->SetString("type", event.transition.type);
+  transitionDict->SetBool("userInitiated", event.transition.userInitiated);
+  transitionDict->SetBool("hashChange", event.transition.hashChange);
+  transitionDict->SetInt("delta", event.transition.delta);
+  transitionDict->SetString("key", event.transition.key);
+  if (event.transition.info) {
+    transitionDict->SetValue("info", event.transition.info);
+  } else {
+    CefRefPtr<CefValue> nullVal = CefValue::Create();
+    nullVal->SetNull();
+    transitionDict->SetValue("info", nullVal);
+  }
+  args->SetDictionary("transition", transitionDict);
+
+  if (event.destination.has_value()) {
+    const auto& dest = event.destination.value();
+    CefRefPtr<CefDictionaryValue> destDict = CefDictionaryValue::Create();
+    destDict->SetString("url", dest.url);
+    destDict->SetBool("sameDocument", dest.sameDocument);
+    destDict->SetString("key", dest.key);
+    destDict->SetString("id", dest.id);
+    destDict->SetInt("index", dest.index);
+    if (dest.state) {
+      destDict->SetValue("state", dest.state);
+    } else {
+      CefRefPtr<CefValue> nullVal = CefValue::Create();
+      nullVal->SetNull();
+      destDict->SetValue("state", nullVal);
+    }
+    args->SetDictionary("destination", destDict);
+  } else {
+    CefRefPtr<CefValue> nullVal = CefValue::Create();
+    nullVal->SetNull();
+    args->SetValue("destination", nullVal);
+  }
+
+  request->SetDictionary("arguments", args);
+
+  CefRefPtr<CefValue> json = CefValue::Create();
+  json->SetDictionary(request);
+  CefRefPtr<CefProcessMessage> message =
+      CefProcessMessage::Create(kOnNavigationMessage);
+  message->GetArgumentList()->SetValue(0, json);
+  frame->SendProcessMessage(PID_BROWSER, message);
+}
+
 CefRefPtr<CefRenderProcessHandler>
 RenderProcessHandler::GetRenderProcessHandler() {
   return this;
@@ -33,10 +134,6 @@ void RenderProcessHandler::OnBrowserCreated(
     CefRefPtr<CefDictionaryValue> extra_info) {}
 
 void RenderProcessHandler::OnBrowserDestroyed(CefRefPtr<CefBrowser> browser) {}
-
-CefRefPtr<CefLoadHandler> RenderProcessHandler::GetLoadHandler() {
-  return nullptr;
-}
 
 class MouseOverHandler : public CefV8Handler {
  public:
@@ -109,59 +206,73 @@ class MouseOverHandler : public CefV8Handler {
   IMPLEMENT_REFCOUNTING(MouseOverHandler);
 };
 
-class HistoryHandler : public CefV8Handler {
+class OnNavigateHandler : public CefV8Handler {
  public:
-  HistoryHandler() {}
+  explicit OnNavigateHandler(CefRefPtr<RenderProcessHandler> renderProcessHandler)
+      : renderProcessHandler(renderProcessHandler) {}
 
   virtual bool Execute(const CefString& name,
                        CefRefPtr<CefV8Value> object,
                        const CefV8ValueList& arguments,
                        CefRefPtr<CefV8Value>& retval,
                        CefString& exception) override {
-    CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
-    CefRefPtr<CefFrame> frame = context->GetFrame();
-    CefRefPtr<CefDictionaryValue> request = CefDictionaryValue::Create();
-    request->SetString("id", uuid_to_string(CreateUuid()));
-    request->SetString("class", "Browser");
-    request->SetInt("instanceId", frame->GetBrowser()->GetIdentifier());
-    CefRefPtr<CefDictionaryValue> requestArguments =
-        CefDictionaryValue::Create();
-    std::string action = arguments[0]->GetStringValue();
-    if (action == "pushState") {
-      request->SetString("method", "OnPushState");
-      requestArguments->SetString("frameId", frame->GetIdentifier());
-      requestArguments->SetBool("isMainFrame", frame->IsMain());
-      requestArguments->SetValue("state", CefV8ValueToCefValue(arguments[1]));
-      requestArguments->SetString("url", arguments[2]->GetStringValue());
-      requestArguments->SetBool("isActive", arguments[3]->GetBoolValue());
-      requestArguments->SetBool("hasBeenActive", arguments[4]->GetBoolValue());
-    } else if (action == "replaceState") {
-      request->SetString("method", "OnReplaceState");
-      requestArguments->SetString("frameId", frame->GetIdentifier());
-      requestArguments->SetBool("isMainFrame", frame->IsMain());
-      requestArguments->SetValue("state", CefV8ValueToCefValue(arguments[1]));
-      requestArguments->SetString("url", arguments[2]->GetStringValue());
-      requestArguments->SetBool("isActive", arguments[3]->GetBoolValue());
-      requestArguments->SetBool("hasBeenActive", arguments[4]->GetBoolValue());
-    } else {
+    if (arguments.empty() || !arguments[0]->IsObject()) {
       return false;
     }
-    request->SetDictionary("arguments", requestArguments);
-    CefRefPtr<CefValue> json = CefValue::Create();
-    json->SetDictionary(request);
-    CefRefPtr<CefProcessMessage> message =
-        CefProcessMessage::Create(kOnHistoryMessage);
-    message->GetArgumentList()->SetValue(0, json);
-    frame->SendProcessMessage(PID_BROWSER, message);
+
+    CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
+    CefRefPtr<CefFrame> frame = context->GetFrame();
+    CefRefPtr<CefV8Value> event = arguments[0];
+
+    // Ignore canceled navigations
+    if (event->GetValue("defaultPrevented")->GetBoolValue()) {
+      renderProcessHandler->SendLogMessage(
+          frame, LOGSEVERITY_INFO,
+          "NavigateEvent ignored: default was prevented");
+      return true;
+    }
+
+    NavigationEvent navEvent;
+    navEvent.source.frameId = frame->GetIdentifier();
+    navEvent.source.isMainFrame = frame->IsMain();
+
+    navEvent.transition.type =
+        event->GetValue("navigationType")->GetStringValue();
+    navEvent.transition.userInitiated =
+        event->GetValue("userInitiated")->GetBoolValue();
+    navEvent.transition.hashChange =
+        event->GetValue("hashChange")->GetBoolValue();
+    navEvent.transition.info = CefV8ValueToCefValue(event->GetValue("info"));
+
+    CefRefPtr<CefV8Value> destinationObject = event->GetValue("destination");
+    NavigationDestination destination;
+    destination.url = destinationObject->GetValue("url")->GetStringValue();
+    destination.sameDocument = destinationObject->GetValue("sameDocument")->GetBoolValue();
+    destination.key = destinationObject->GetValue("key")->GetStringValue();
+    destination.id = destinationObject->GetValue("id")->GetStringValue();
+    destination.index = destinationObject->GetValue("index")->GetIntValue();
+
+    CefRefPtr<CefV8Value> getStateFunc =
+        destinationObject->GetValue("getState");
+    CefV8ValueList emptyArgs;
+    destination.state =
+        CefV8ValueToCefValue(getStateFunc->ExecuteFunction(destinationObject, emptyArgs));
+    navEvent.destination = destination;
+
+    renderProcessHandler->SendNavigationEvent(frame, navEvent);
     return true;
   }
 
-  IMPLEMENT_REFCOUNTING(HistoryHandler);
+ private:
+  CefRefPtr<RenderProcessHandler> renderProcessHandler;
+
+  IMPLEMENT_REFCOUNTING(OnNavigateHandler);
 };
 
-class NavigationHandler : public CefV8Handler {
+class HistoryOverridesHandler : public CefV8Handler {
  public:
-  NavigationHandler() {}
+  explicit HistoryOverridesHandler(CefRefPtr<RenderProcessHandler> renderProcessHandler)
+      : renderProcessHandler(renderProcessHandler) {}
 
   virtual bool Execute(const CefString& name,
                        CefRefPtr<CefV8Value> object,
@@ -170,41 +281,120 @@ class NavigationHandler : public CefV8Handler {
                        CefString& exception) override {
     CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
     CefRefPtr<CefFrame> frame = context->GetFrame();
-    CefRefPtr<CefDictionaryValue> request = CefDictionaryValue::Create();
-    request->SetString("id", uuid_to_string(CreateUuid()));
-    request->SetString("class", "Browser");
-    request->SetInt("instanceId", frame->GetBrowser()->GetIdentifier());
-    CefRefPtr<CefDictionaryValue> requestArguments =
-        CefDictionaryValue::Create();
-    std::string action = arguments[0]->GetStringValue();
-    if (action == "url") {
-      request->SetString("method", "OnNavigateByUrl");
-      requestArguments->SetString("url", arguments[1]->GetStringValue());
-      requestArguments->SetValue("state", CefV8ValueToCefValue(arguments[2]));
-      requestArguments->SetValue("info", CefV8ValueToCefValue(arguments[3]));
-      requestArguments->SetString("history", arguments[4]->GetStringValue());
-    } else if (action == "delta") {
-      request->SetString("method", "OnNavigateByDelta");
-      requestArguments->SetInt("delta", arguments[1]->GetIntValue());
-      requestArguments->SetValue("info", CefV8ValueToCefValue(arguments[2]));
-    } else if (action == "key") {
-      request->SetString("method", "OnNavigateByKey");
-      requestArguments->SetString("key", arguments[1]->GetStringValue());
-      requestArguments->SetValue("info", CefV8ValueToCefValue(arguments[2]));
-    } else {
-      return false;
+
+    int delta = 0;
+    if (name == "back") {
+      delta = -1;
+    } else if (name == "forward") {
+      delta = 1;
+    } else if (name == "go") {
+      if (!arguments.empty() && arguments[0]->IsInt()) {
+        delta = arguments[0]->GetIntValue();
+      }
     }
-    request->SetDictionary("arguments", requestArguments);
-    CefRefPtr<CefValue> json = CefValue::Create();
-    json->SetDictionary(request);
-    CefRefPtr<CefProcessMessage> message =
-        CefProcessMessage::Create(kOnNavigationMessage);
-    message->GetArgumentList()->SetValue(0, json);
-    frame->SendProcessMessage(PID_BROWSER, message);
+
+    NavigationEvent event;
+    event.source.frameId = frame->GetIdentifier();
+    event.source.isMainFrame = frame->IsMain();
+    event.transition.type = "traverse";
+    event.transition.userInitiated = false;
+    event.transition.hashChange = false;
+    event.transition.delta = delta;
+    event.transition.key = "";
+    event.transition.info = nullptr;
+    event.destination = std::nullopt;
+
+    renderProcessHandler->SendNavigationEvent(frame, event);
+
+    retval = CefV8Value::CreateUndefined();
     return true;
   }
 
-  IMPLEMENT_REFCOUNTING(NavigationHandler);
+ private:
+  CefRefPtr<RenderProcessHandler> renderProcessHandler;
+
+  IMPLEMENT_REFCOUNTING(HistoryOverridesHandler);
+};
+
+class NavigationOverridesHandler : public CefV8Handler {
+ public:
+  explicit NavigationOverridesHandler(
+      CefRefPtr<RenderProcessHandler> renderProcessHandler)
+      : renderProcessHandler(renderProcessHandler) {}
+
+  virtual bool Execute(const CefString& name,
+                       CefRefPtr<CefV8Value> object,
+                       const CefV8ValueList& arguments,
+                       CefRefPtr<CefV8Value>& retval,
+                       CefString& exception) override {
+    CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
+    CefRefPtr<CefFrame> frame = context->GetFrame();
+
+    int delta = 0;
+    CefString key = "";
+    CefRefPtr<CefV8Value> infoVal = nullptr;
+
+    if (name == "back") {
+      delta = -1;
+      if (!arguments.empty() && arguments[0]->IsObject()) {
+        infoVal = arguments[0]->GetValue("info");
+      }
+    } else if (name == "forward") {
+      delta = 1;
+      if (!arguments.empty() && arguments[0]->IsObject()) {
+        infoVal = arguments[0]->GetValue("info");
+      }
+    } else if (name == "traverseTo") {
+      if (!arguments.empty() && arguments[0]->IsString()) {
+        key = arguments[0]->GetStringValue();
+      }
+      if (arguments.size() > 1 && arguments[1]->IsObject()) {
+        infoVal = arguments[1]->GetValue("info");
+      }
+    }
+
+    NavigationEvent event;
+    event.source.frameId = frame->GetIdentifier();
+    event.source.isMainFrame = frame->IsMain();
+    event.transition.type = "traverse";
+    event.transition.userInitiated = false;
+    event.transition.hashChange = false;
+    event.transition.delta = delta;
+    event.transition.key = key;
+    if (infoVal) {
+      event.transition.info = CefV8ValueToCefValue(infoVal);
+    }
+    event.destination = std::nullopt;
+    renderProcessHandler->SendNavigationEvent(frame, event);
+
+    // Return NavigationResult { committed, finished }
+    CefRefPtr<CefV8Value> global = context->GetGlobal();
+    CefRefPtr<CefV8Value> navObj = global->GetValue("navigation");
+    CefRefPtr<CefV8Value> currentEntry = (navObj && navObj->IsObject())
+                                             ? navObj->GetValue("currentEntry")
+                                             : nullptr;
+
+    CefRefPtr<CefV8Value> promiseClass = global->GetValue("Promise");
+    CefRefPtr<CefV8Value> resolveFunc = promiseClass->GetValue("resolve");
+    CefV8ValueList resolveArgs;
+    if (currentEntry) {
+        resolveArgs.push_back(currentEntry);
+    }
+    CefRefPtr<CefV8Value> resolvedPromise =
+        resolveFunc->ExecuteFunction(promiseClass, resolveArgs);
+
+    retval = CefV8Value::CreateObject(nullptr, nullptr);
+    retval->SetValue("committed", resolvedPromise,
+                        V8_PROPERTY_ATTRIBUTE_NONE);
+    retval->SetValue("finished", resolvedPromise,
+                        V8_PROPERTY_ATTRIBUTE_NONE);
+    return true;
+   }
+
+ private:
+  CefRefPtr<RenderProcessHandler> renderProcessHandler;
+
+  IMPLEMENT_REFCOUNTING(NavigationOverridesHandler);
 };
 
 class FocusOutHandler : public CefV8Handler {
@@ -255,6 +445,7 @@ class FocusOutHandler : public CefV8Handler {
 void RenderProcessHandler::OnContextCreated(CefRefPtr<CefBrowser> browser,
                                             CefRefPtr<CefFrame> frame,
                                             CefRefPtr<CefV8Context> context) {
+  this->SendLogMessage(frame, LOGSEVERITY_INFO, "Entered OnContextCreated");
   CefRefPtr<CefV8Value> window = context->GetGlobal();
 
   // mouse over
@@ -266,91 +457,49 @@ void RenderProcessHandler::OnContextCreated(CefRefPtr<CefBrowser> browser,
   window->GetValue("addEventListener")
       ->ExecuteFunction(window, mouseOverArguments);
 
-  // history and navigation API shims
-  CefRefPtr<CefV8Handler> modifyHistoryHandler = new HistoryHandler();
-  CefRefPtr<CefV8Handler> navigateHandler = new NavigationHandler();
-  CefRefPtr<CefV8Value> onProgrammaticModifyHistory =
-      CefV8Value::CreateFunction("modifyHistory", modifyHistoryHandler);
-  CefRefPtr<CefV8Value> onProgrammaticNavigation =
-      CefV8Value::CreateFunction("navigate", navigateHandler);
+  // navigate
+  // navigate
+  CefRefPtr<CefV8Value> navigation = window->GetValue("navigation");
+  if (navigation && navigation->IsObject()) {
+    CefRefPtr<CefV8Handler> onNavigateHandler = new OnNavigateHandler(this);
+    CefV8ValueList onNavigateArguments;
+    onNavigateArguments.push_back(CefV8Value::CreateString("navigate"));
+    onNavigateArguments.push_back(
+        CefV8Value::CreateFunction("onNavigate", onNavigateHandler));
+    navigation->GetValue("addEventListener")
+        ->ExecuteFunction(navigation, onNavigateArguments);
 
-  std::string shimScript = R"(
-    (function(modifyHistory, navigate) {
+    // navigation traverse overrides
+    CefRefPtr<CefV8Handler> navigationOverridesHandler =
+        new NavigationOverridesHandler(this);
+    navigation->SetValue(
+        "back", CefV8Value::CreateFunction("back", navigationOverridesHandler),
+        V8_PROPERTY_ATTRIBUTE_NONE);
+    navigation->SetValue(
+        "forward",
+        CefV8Value::CreateFunction("forward", navigationOverridesHandler),
+        V8_PROPERTY_ATTRIBUTE_NONE);
+    navigation->SetValue(
+        "traverseTo",
+        CefV8Value::CreateFunction("traverseTo", navigationOverridesHandler),
+        V8_PROPERTY_ATTRIBUTE_NONE);
+  }
 
-      // helper function for resolving relative URLs to absolute URLs
-      function resolveUrl(urlString) {
-        try {
-          return new URL(String(urlString ?? ''), document.baseURI || location.href).href;
-        } catch (e) {
-          return String(urlString || '');
-        }
-      }
- 
-      // history shims
-      const originalPushState = history.pushState.bind(history);
-      history.pushState = function(state, unused, url) {
-        originalPushState(state, unused, url);
-        modifyHistory('pushState', state, resolveUrl(url), navigator.userActivation.isActive, navigator.userActivation.hasBeenActive);
-      };
-      const originalReplaceState = history.replaceState.bind(history);
-      history.replaceState = function(state, unused, url) {
-        originalReplaceState(state, unused, url);
-        modifyHistory('replaceState', state, resolveUrl(url), navigator.userActivation.isActive, navigator.userActivation.hasBeenActive);
-      };
-      history.back = function() { 
-        navigate('delta', -1, null);
-      };
-      history.forward = function() {
-        navigate('delta', 1, null); 
-      };
-      history.go = function(delta) { 
-        navigate('delta', delta || 0, null);
-      };
-
-      // navigation shims
-      
-      // TODO: Fully Robust Navigation API Support
-      // Currently, these promises resolve immediately with `navigation.currentEntry`.
-      // For full WHATWG spec compliance:
-      //   1. Pass a unique `requestId` to `navigate(...)` and store promise resolvers in a map.
-      //   2. Wait for application to process the traversal/URL change and post a message back.
-      //   3. Resolve `committed` when application initiates/commits the entry.
-      //   4. Resolve `finished` when OnLoadingStateChange indicates the document is completely loaded.
-      function createNavigationResult() {
-        const entry = window.navigation.currentEntry;
-        return {
-          committed: Promise.resolve(entry),
-          finished: Promise.resolve(entry)
-        };
-      }
-      navigation.navigate = (url = '', options = {}) => {
-        navigate('url', String(url), options.state, options.info, options.history || 'auto');
-        return createNavigationResult();
-      };
-      navigation.back = (options = {}) => {
-        navigate('delta', -1, options.info);
-        return createNavigationResult();
-      };
-      navigation.forward = (options = {}) => {
-        navigate('delta', 1, options.info);
-        return createNavigationResult();
-      };
-      navigation.traverseTo = (key = '', options = {}) => {
-        navigate('key', String(key), options.info);
-        return createNavigationResult();
-      };
-    })
-)";
-
-  CefRefPtr<CefV8Value> shimFunction;
-  CefRefPtr<CefV8Exception> shimException;
-  bool shimSuccess = context->Eval(CefString(shimScript), CefString(""), 0,
-                                   shimFunction, shimException);
-  if (shimSuccess && shimFunction->IsFunction()) {
-    CefV8ValueList shimArgs;
-    shimArgs.push_back(onProgrammaticModifyHistory);
-    shimArgs.push_back(onProgrammaticNavigation);
-    shimFunction->ExecuteFunction(nullptr, shimArgs);
+  // history traverse overrides
+  CefRefPtr<CefV8Value> history = window->GetValue("history");
+  if (history && history->IsObject()) {
+    CefRefPtr<CefV8Handler> historyOverridesHandler =
+        new HistoryOverridesHandler(this);
+    history->SetValue(
+        "back", CefV8Value::CreateFunction("back", historyOverridesHandler),
+        V8_PROPERTY_ATTRIBUTE_NONE);
+    history->SetValue(
+        "forward",
+        CefV8Value::CreateFunction("forward", historyOverridesHandler),
+        V8_PROPERTY_ATTRIBUTE_NONE);
+    history->SetValue("go",
+                      CefV8Value::CreateFunction("go", historyOverridesHandler),
+                      V8_PROPERTY_ATTRIBUTE_NONE);
   }
 
   // focus out
