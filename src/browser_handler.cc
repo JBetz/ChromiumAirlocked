@@ -395,7 +395,7 @@ bool BrowserHandler::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
   arguments->SetInt("resourceType",
                     static_cast<int>(request->GetResourceType()));
   browserProcessHandler->SendRequest("Browser", browser->GetIdentifier(),
-                                     "OnBeforeBrowse", arguments);
+                                     "OnBeforeLoad", arguments);
   return false;
 }
 
