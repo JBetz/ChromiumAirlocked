@@ -15,12 +15,10 @@ struct NavigationSource {
 };
 
 struct NavigationTransition {
-  std::string type;  // "push", "replace", "traverse", "reload"
+  std::string type;  // "push", "replace", "reload"
   bool userInitiated = false;
   bool hashChange = false;
-  int delta = 0;             // -1, 1, or explicit delta
-  std::string key;           // target key for traverseTo
-  CefRefPtr<CefValue> info;  // any serializable value
+  CefRefPtr<CefValue> info;
 };
 
 struct NavigationDestination {
@@ -35,7 +33,14 @@ struct NavigationDestination {
 struct NavigationEvent {
   NavigationSource source;
   NavigationTransition transition;
-  std::optional<NavigationDestination> destination;
+  NavigationDestination destination;
+};
+
+struct TraverseRequest {
+  NavigationSource source;
+  int delta = 0;    // -1, 1, or explicit delta
+  std::string key;  // target key for traverseTo
+  CefRefPtr<CefValue> info;
 };
 
 // Client app implementation for the renderer process.
@@ -48,7 +53,9 @@ class RenderProcessHandler : public ProcessHandler,
                       const cef_log_severity_t severity,
                       const CefString& message);
   void SendNavigationEvent(CefRefPtr<CefFrame> frame,
-                           const NavigationEvent& data);
+                           const NavigationEvent& event);
+  void SendTraverseRequest(CefRefPtr<CefFrame> frame,
+                          const TraverseRequest& request);
 
  private:
   // CefApp methods.

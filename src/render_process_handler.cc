@@ -65,54 +65,71 @@ void RenderProcessHandler::SendNavigationEvent(CefRefPtr<CefFrame> frame,
   CefRefPtr<CefDictionaryValue> request = CefDictionaryValue::Create();
   request->SetString("id", uuid_to_string(CreateUuid()));
   request->SetString("class", "Browser");
-  request->SetString("method", "OnNavigate");
+  request->SetString("method", "OnNavigated");
   request->SetInt("instanceId", frame->GetBrowser()->GetIdentifier());
 
-  CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();
+  CefRefPtr<CefDictionaryValue> arguments = CefDictionaryValue::Create();
 
   CefRefPtr<CefDictionaryValue> sourceDict = CefDictionaryValue::Create();
   sourceDict->SetString("frameId", event.source.frameId);
   sourceDict->SetBool("isMainFrame", event.source.isMainFrame);
-  args->SetDictionary("source", sourceDict);
+  arguments->SetDictionary("source", sourceDict);
 
   CefRefPtr<CefDictionaryValue> transitionDict = CefDictionaryValue::Create();
   transitionDict->SetString("type", event.transition.type);
   transitionDict->SetBool("userInitiated", event.transition.userInitiated);
   transitionDict->SetBool("hashChange", event.transition.hashChange);
-  transitionDict->SetInt("delta", event.transition.delta);
-  transitionDict->SetString("key", event.transition.key);
   if (event.transition.info) {
     transitionDict->SetValue("info", event.transition.info);
   } else {
-    CefRefPtr<CefValue> nullVal = CefValue::Create();
-    nullVal->SetNull();
-    transitionDict->SetValue("info", nullVal);
+    transitionDict->SetNull("info");
   }
-  args->SetDictionary("transition", transitionDict);
+  arguments->SetDictionary("transition", transitionDict);
 
-  if (event.destination.has_value()) {
-    const auto& dest = event.destination.value();
-    CefRefPtr<CefDictionaryValue> destDict = CefDictionaryValue::Create();
-    destDict->SetString("url", dest.url);
-    destDict->SetBool("sameDocument", dest.sameDocument);
-    destDict->SetString("key", dest.key);
-    destDict->SetString("id", dest.id);
-    destDict->SetInt("index", dest.index);
-    if (dest.state) {
-      destDict->SetValue("state", dest.state);
-    } else {
-      CefRefPtr<CefValue> nullVal = CefValue::Create();
-      nullVal->SetNull();
-      destDict->SetValue("state", nullVal);
-    }
-    args->SetDictionary("destination", destDict);
+  CefRefPtr<CefDictionaryValue> destination = CefDictionaryValue::Create();
+  destination->SetString("url", event.destination.url);
+  destination->SetBool("sameDocument", event.destination.sameDocument);
+  destination->SetString("key", event.destination.key);
+  destination->SetString("id", event.destination.id);
+  destination->SetInt("index", event.destination.index);
+  if (event.destination.state) {
+    destination->SetValue("state", event.destination.state);
   } else {
-    CefRefPtr<CefValue> nullVal = CefValue::Create();
-    nullVal->SetNull();
-    args->SetValue("destination", nullVal);
+      destination->SetNull("state");
   }
+  arguments->SetDictionary("destination", destination);
+  request->SetDictionary("arguments", arguments);
 
-  request->SetDictionary("arguments", args);
+  CefRefPtr<CefValue> json = CefValue::Create();
+  json->SetDictionary(request);
+  CefRefPtr<CefProcessMessage> message =
+      CefProcessMessage::Create(kOnNavigationMessage);
+  message->GetArgumentList()->SetValue(0, json);
+  frame->SendProcessMessage(PID_BROWSER, message);
+}
+
+void RenderProcessHandler::SendTraverseRequest(
+    CefRefPtr<CefFrame> frame,
+    const TraverseRequest& request_) {
+  CefRefPtr<CefDictionaryValue> request = CefDictionaryValue::Create();
+  request->SetString("id", uuid_to_string(CreateUuid()));
+  request->SetString("class", "Browser");
+  request->SetString("method", "OnTraverseRequest");
+  request->SetInt("instanceId", frame->GetBrowser()->GetIdentifier());
+
+  CefRefPtr<CefDictionaryValue> arguments = CefDictionaryValue::Create();
+  CefRefPtr<CefDictionaryValue> sourceDict = CefDictionaryValue::Create();
+  sourceDict->SetString("frameId", request_.source.frameId);
+  sourceDict->SetBool("isMainFrame", request_.source.isMainFrame);
+  arguments->SetDictionary("source", sourceDict);
+  arguments->SetInt("delta", request_.delta);
+  arguments->SetString("key", request_.key);
+  if (request_.info) {
+    arguments->SetValue("info", request_.info);
+  } else {
+    arguments->SetNull("info");
+  }
+  request->SetDictionary("arguments", arguments);
 
   CefRefPtr<CefValue> json = CefValue::Create();
   json->SetDictionary(request);
@@ -293,19 +310,13 @@ class HistoryOverridesHandler : public CefV8Handler {
       }
     }
 
-    NavigationEvent event;
-    event.source.frameId = frame->GetIdentifier();
-    event.source.isMainFrame = frame->IsMain();
-    event.transition.type = "traverse";
-    event.transition.userInitiated = false;
-    event.transition.hashChange = false;
-    event.transition.delta = delta;
-    event.transition.key = "";
-    event.transition.info = nullptr;
-    event.destination = std::nullopt;
-
-    renderProcessHandler->SendNavigationEvent(frame, event);
-
+    TraverseRequest request;
+    request.source.frameId = frame->GetIdentifier();
+    request.source.isMainFrame = frame->IsMain();
+    request.delta = delta;
+    request.key = "";
+    request.info = nullptr;
+    renderProcessHandler->SendTraverseRequest(frame, request);
     retval = CefV8Value::CreateUndefined();
     return true;
   }
@@ -353,19 +364,15 @@ class NavigationOverridesHandler : public CefV8Handler {
       }
     }
 
-    NavigationEvent event;
-    event.source.frameId = frame->GetIdentifier();
-    event.source.isMainFrame = frame->IsMain();
-    event.transition.type = "traverse";
-    event.transition.userInitiated = false;
-    event.transition.hashChange = false;
-    event.transition.delta = delta;
-    event.transition.key = key;
+    TraverseRequest request;
+    request.source.frameId = frame->GetIdentifier();
+    request.source.isMainFrame = frame->IsMain();
+    request.delta = delta;
+    request.key = key;
     if (infoVal) {
-      event.transition.info = CefV8ValueToCefValue(infoVal);
+      request.info = CefV8ValueToCefValue(infoVal);
     }
-    event.destination = std::nullopt;
-    renderProcessHandler->SendNavigationEvent(frame, event);
+    renderProcessHandler->SendTraverseRequest(frame, request);
 
     // Return NavigationResult { committed, finished }
     CefRefPtr<CefV8Value> global = context->GetGlobal();
