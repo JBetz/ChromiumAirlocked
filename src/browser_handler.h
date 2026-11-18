@@ -30,6 +30,8 @@ class BrowserHandler : public CefClient,
   void MarkDestroyed();
   void SetPageRectangle(CefRect rectangle);
   void SetWindowOrigin(CefPoint point);
+  void SendLogMessage(const cef_log_severity_t severity,
+                      const CefString& message);
 
   // CefClient:
   CefRefPtr<CefRenderHandler> GetRenderHandler() override;

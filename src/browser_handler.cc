@@ -36,6 +36,11 @@ void BrowserHandler::SetWindowOrigin(CefPoint point) {
   windowOrigin = point;
 }
 
+void BrowserHandler::SendLogMessage(const cef_log_severity_t severity,
+                                    const CefString& message) {
+  browserProcessHandler->SendLogMessage(severity, message);
+}
+
 CefRefPtr<CefRenderHandler> BrowserHandler::GetRenderHandler() {
   return this;
 }
@@ -103,13 +108,13 @@ void BrowserHandler::OnPaint(CefRefPtr<CefBrowser> browser,
   HANDLE fileMapping = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL,
                                           PAGE_READWRITE, 0, bufferSize, NULL);
   if (fileMapping == NULL) {
-    LOG(ERROR) << "Error creating file mapping for OnPaint buffer";
+    this->SendLogMessage(LOGSEVERITY_ERROR, "Error creating file mapping for OnPaint buffer");
     return;
   }
   void* mappedView =
       MapViewOfFile(fileMapping, FILE_MAP_WRITE, 0, 0, bufferSize);
   if (mappedView == NULL) {
-    LOG(ERROR) << "Error mapping view of file for OnPaint buffer";
+    this->SendLogMessage(LOGSEVERITY_ERROR, "Error mapping view of file for OnPaint buffer");
     CloseHandle(fileMapping);
     return;
   }
@@ -125,8 +130,9 @@ void BrowserHandler::OnPaint(CefRefPtr<CefBrowser> browser,
   CloseHandle(fileMapping);
 
   if (!duplicateSuccess) {
-    LOG(ERROR) << "Error duplicating file mapping handle: DuplicateHandle() "
-                  "call failed";
+    this->SendLogMessage(
+        LOGSEVERITY_ERROR,
+        "Error duplicating file mapping handle for OnPaint buffer");
     return;
   }
 
@@ -178,8 +184,7 @@ void BrowserHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser,
       GetCurrentProcess(), sourceHandle, applicationProcessHandle,
       &duplicateHandle, 0, FALSE, DUPLICATE_SAME_ACCESS);
   if (!duplicateSuccess) {
-    LOG(ERROR)
-        << "Error duplicating shared texture: DuplicateHandle() call failed";
+    this->SendLogMessage(LOGSEVERITY_ERROR, "Error duplicating shared texture handle");
     return;
   }
   CefRefPtr<CefDictionaryValue> arguments = CefDictionaryValue::Create();
@@ -660,6 +665,6 @@ void BrowserHandler::DispatchDownloadAction(
   } else if (action == "resume") {
     callback->Resume();
   } else {
-    LOG(ERROR) << "Unrecognized download action: " << action;
+    this->SendLogMessage(LOGSEVERITY_ERROR, "Unrecognized download action: " + action);
   }
 }
