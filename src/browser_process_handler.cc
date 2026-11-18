@@ -94,12 +94,12 @@ void BrowserProcessHandler::OnContextInitialized() {
 
   CefServer::CreateServer("127.0.0.1", static_cast<uint16_t>(serverPort), 10,
                           this);
-  this->SendLogMessage(LOGSEVERITY_INFO, "Starting WebSocket server on port " + std::to_string(serverPort));
+  LOG(INFO) << "Starting WebSocket server on port " << serverPort;
 }
 
 void BrowserProcessHandler::OnServerCreated(CefRefPtr<CefServer> server_) {
   this->server = server_;
-  this->SendLogMessage(LOGSEVERITY_INFO, "WebSocket server listening on " + server->GetAddress().ToString());
+  LOG(INFO) << "WebSocket server listening on " << server->GetAddress();
 
   if (serverReadyEventName.has_value()) {
     HANDLE hEvent =
@@ -113,7 +113,7 @@ void BrowserProcessHandler::OnServerCreated(CefRefPtr<CefServer> server_) {
 }
 
 void BrowserProcessHandler::OnServerDestroyed(CefRefPtr<CefServer> server_) {
-  this->SendLogMessage(LOGSEVERITY_INFO, "WebSocket server destroyed");
+  LOG(INFO) << "WebSocket server destroyed";
   this->server = nullptr;
   this->activeConnectionId.reset();
 }
@@ -125,8 +125,7 @@ void BrowserProcessHandler::OnClientConnected(CefRefPtr<CefServer> server_,
 
 void BrowserProcessHandler::OnClientDisconnected(CefRefPtr<CefServer> server_,
                                                  int connection_id) {
-  this->SendLogMessage(LOGSEVERITY_INFO, "Client disconnected: connection_id=" +
-                                             std::to_string(connection_id));
+  LOG(INFO) << "Client disconnected: connection_id=" << connection_id;
   if (activeConnectionId.has_value() &&
       activeConnectionId.value() == connection_id) {
     activeConnectionId.reset();
@@ -331,7 +330,7 @@ void BrowserProcessHandler::GetBrowserFrameRate(
 
 void BrowserProcessHandler::SendMessage(const CefString& payload) {
   if (!server || !activeConnectionId.has_value()) {
-    this->SendLogMessage(LOGSEVERITY_WARNING, "Cannot send WebSocket message: no active connection");
+    LOG(WARNING) << "Cannot send WebSocket message: no active connection";
     return;
   }
 
