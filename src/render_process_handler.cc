@@ -391,58 +391,6 @@ class CurrentEntryChangeHandler : public CefV8Handler {
   IMPLEMENT_REFCOUNTING(CurrentEntryChangeHandler);
 };
 
-class HashChangeHandler : public CefV8Handler {
- public:
-  explicit HashChangeHandler(
-      CefRefPtr<RenderProcessHandler> renderProcessHandler)
-      : renderProcessHandler(renderProcessHandler) {}
-
-  virtual bool Execute(const CefString& name,
-                       CefRefPtr<CefV8Value> object,
-                       const CefV8ValueList& arguments,
-                       CefRefPtr<CefV8Value>& retval,
-                       CefString& exception) override {
-    if (arguments.empty() || !arguments[0]->IsObject()) {
-      return false;
-    }
-
-    CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
-    CefRefPtr<CefFrame> frame = context->GetFrame();
-    CefRefPtr<CefV8Value> event = arguments[0];
-
-    CefRefPtr<CefDictionaryValue> request = CefDictionaryValue::Create();
-    request->SetString("id", uuid_to_string(CreateUuid()));
-    request->SetString("class", "Browser");
-    request->SetString("method", "OnHashChange");
-    request->SetInt("instanceId", frame->GetBrowser()->GetIdentifier());
-
-    CefRefPtr<CefDictionaryValue> requestArguments =
-        CefDictionaryValue::Create();
-    requestArguments->SetString("frameId", frame->GetIdentifier());
-    requestArguments->SetBool("isMainFrame", frame->IsMain());
-    requestArguments->SetString("oldUrl",
-                                event->GetValue("oldURL")->GetStringValue());
-    requestArguments->SetString("newUrl",
-                                event->GetValue("newURL")->GetStringValue());
-
-    request->SetDictionary("arguments", requestArguments);
-
-    CefRefPtr<CefValue> json = CefValue::Create();
-    json->SetDictionary(request);
-    CefRefPtr<CefProcessMessage> message =
-        CefProcessMessage::Create(kMessageName);
-    message->GetArgumentList()->SetValue(0, json);
-    frame->SendProcessMessage(PID_BROWSER, message);
-
-    return true;
-  }
-
- private:
-  CefRefPtr<RenderProcessHandler> renderProcessHandler;
-
-  IMPLEMENT_REFCOUNTING(HashChangeHandler);
-};
-
 class FocusOutHandler : public CefV8Handler {
  public:
   FocusOutHandler() {}
@@ -548,14 +496,6 @@ void RenderProcessHandler::OnContextCreated(CefRefPtr<CefBrowser> browser,
                       CefV8Value::CreateFunction("go", historyOverridesHandler),
                       V8_PROPERTY_ATTRIBUTE_NONE);
   }
-
-  // hash change
-  CefRefPtr<CefV8Handler> hashChangeHandler = new HashChangeHandler(this);
-  CefV8ValueList hashArgs;
-  hashArgs.push_back(CefV8Value::CreateString("hashchange"));
-  hashArgs.push_back(
-      CefV8Value::CreateFunction("onHashChange", hashChangeHandler));
-  window->GetValue("addEventListener")->ExecuteFunction(window, hashArgs);
 
   // focus out
   CefRefPtr<CefV8Value> document = window->GetValue("document");
