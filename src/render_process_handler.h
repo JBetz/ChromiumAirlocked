@@ -14,33 +14,17 @@ struct NavigationSource {
   bool isMainFrame = false;
 };
 
-struct NavigationTransition {
-  std::string type;  // "push", "replace", "reload"
-  bool userInitiated = false;
-  bool hashChange = false;
-  CefRefPtr<CefValue> info;
-};
-
-struct NavigationDestination {
-  std::string url;
-  bool sameDocument = false;
-  std::string key;
-  std::string id;
-  int index = -1;
-  CefRefPtr<CefValue> state;
-};
-
-struct NavigationEvent {
-  NavigationSource source;
-  NavigationTransition transition;
-  NavigationDestination destination;
-};
-
 struct TraverseRequest {
   NavigationSource source;
   int delta = 0;    // -1, 1, or explicit delta
   std::string key;  // target key for traverseTo
   CefRefPtr<CefValue> info;
+};
+
+struct StateUpdate {
+  NavigationSource source;
+  std::string url;
+  CefRefPtr<CefValue> state;
 };
 
 // Client app implementation for the renderer process.
@@ -52,10 +36,11 @@ class RenderProcessHandler : public ProcessHandler,
   void SendLogMessage(CefRefPtr<CefFrame> frame,
                       const cef_log_severity_t severity,
                       const CefString& message);
-  void SendNavigationEvent(CefRefPtr<CefFrame> frame,
-                           const NavigationEvent& event);
   void SendTraverseRequest(CefRefPtr<CefFrame> frame,
                           const TraverseRequest& request);
+  void SendStateUpdate(CefRefPtr<CefFrame> frame,
+                       const CefString& method,
+                       const StateUpdate& request);
 
  private:
   // CefApp methods.
