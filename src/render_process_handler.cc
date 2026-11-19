@@ -69,8 +69,16 @@ void RenderProcessHandler::SendTraverseRequest(
   sourceDict->SetString("frameId", event.source.frameId);
   sourceDict->SetBool("isMainFrame", event.source.isMainFrame);
   arguments->SetDictionary("source", sourceDict);
-  arguments->SetInt("delta", event.delta);
-  arguments->SetString("key", event.key);
+  if (event.delta.has_value()) {
+    arguments->SetInt("delta", event.delta.value());
+  } else {
+    arguments->SetNull("delta");
+  }
+  if (event.key.has_value()) {
+    arguments->SetString("key", event.key.value());
+  } else {
+    arguments->SetNull("key");
+  }
   if (event.info) {
     arguments->SetValue("info", event.info);
   } else {
@@ -213,7 +221,7 @@ class HistoryTraversalOverrides : public CefV8Handler {
     CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
     CefRefPtr<CefFrame> frame = context->GetFrame();
 
-    int delta = 0;
+    std::optional<int> delta = std::nullopt;
     if (name == "back") {
       delta = -1;
     } else if (name == "forward") {
@@ -228,7 +236,7 @@ class HistoryTraversalOverrides : public CefV8Handler {
     request.source.frameId = frame->GetIdentifier();
     request.source.isMainFrame = frame->IsMain();
     request.delta = delta;
-    request.key = "";
+    request.key = std::nullopt;
     request.info = nullptr;
     renderProcessHandler->SendTraverseRequest(frame, request);
     retval = CefV8Value::CreateUndefined();
@@ -255,8 +263,8 @@ class NavigationTraversalOverrides : public CefV8Handler {
     CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
     CefRefPtr<CefFrame> frame = context->GetFrame();
 
-    int delta = 0;
-    CefString key = "";
+    std::optional<int> delta = std::nullopt;
+    std::optional<CefString> key = std::nullopt;
     CefRefPtr<CefV8Value> infoVal = nullptr;
 
     if (name == "back") {

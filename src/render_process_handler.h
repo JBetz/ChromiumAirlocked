@@ -16,14 +16,14 @@ struct NavigationSource {
 
 struct TraverseRequest {
   NavigationSource source;
-  int delta = 0;    // -1, 1, or explicit delta
-  std::string key;  // target key for traverseTo
+  std::optional<int> delta = 0;    // -1, 1, or explicit delta
+  std::optional<CefString> key;  // target key for traverseTo
   CefRefPtr<CefValue> info;
 };
 
 struct StateUpdate {
   NavigationSource source;
-  std::string url;
+  CefString url;
   CefRefPtr<CefValue> state;
 };
 
