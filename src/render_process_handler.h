@@ -39,7 +39,7 @@ class RenderProcessHandler : public ProcessHandler,
   void SendTraverseRequest(CefRefPtr<CefFrame> frame,
                           const TraverseRequest& request);
   void SendStateUpdate(CefRefPtr<CefFrame> frame,
-                       const CefString& method,
+                       const CefString& navigationType,
                        const StateUpdate& request);
 
  private:

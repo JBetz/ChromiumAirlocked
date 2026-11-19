@@ -88,12 +88,13 @@ void RenderProcessHandler::SendTraverseRequest(
 
 void RenderProcessHandler::SendStateUpdate(
     CefRefPtr<CefFrame> frame,
-    const CefString& method,
+    const CefString& navigationType,
     const StateUpdate& event) {
   CefRefPtr<CefDictionaryValue> request = CefDictionaryValue::Create();
   request->SetString("id", uuid_to_string(CreateUuid()));
   request->SetString("class", "Browser");
-  request->SetString("method", method);
+  request->SetString("method",
+                     navigationType == "push" ? "OnPushState" : "OnReplaceState");
   request->SetInt("instanceId", frame->GetBrowser()->GetIdentifier());
 
   CefRefPtr<CefDictionaryValue> arguments = CefDictionaryValue::Create();
@@ -317,105 +318,77 @@ class NavigationTraversalOverrides : public CefV8Handler {
   IMPLEMENT_REFCOUNTING(NavigationTraversalOverrides);
 };
 
-class NavigationNavigateOverrides : public CefV8Handler {
+class CurrentEntryChangeHandler : public CefV8Handler {
  public:
-  NavigationNavigateOverrides(
-      CefRefPtr<RenderProcessHandler> renderProcessHandler,
-      CefRefPtr<CefV8Value> originalFunction)
-      : renderProcessHandler(renderProcessHandler),
-        originalFunction(originalFunction) {}
+  explicit CurrentEntryChangeHandler(
+      CefRefPtr<RenderProcessHandler> renderProcessHandler)
+      : renderProcessHandler(renderProcessHandler) {}
 
   virtual bool Execute(const CefString& name,
                        CefRefPtr<CefV8Value> object,
                        const CefV8ValueList& arguments,
                        CefRefPtr<CefV8Value>& retval,
                        CefString& exception) override {
+    if (arguments.empty() || !arguments[0]->IsObject()) {
+      return false;
+    }
+
     CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
     CefRefPtr<CefFrame> frame = context->GetFrame();
+    CefRefPtr<CefV8Value> event = arguments[0];
 
-    retval = originalFunction->ExecuteFunction(object, arguments);
-    if (!retval) {
+    std::string navigationType = "push";
+    CefRefPtr<CefV8Value> navigationTypeValue =
+        event->GetValue("navigationType");
+    if (navigationTypeValue && navigationTypeValue->IsString()) {
+      navigationType = navigationTypeValue->GetStringValue().ToString();
+    }
+
+    if (navigationType != "push" && navigationType != "replace") {
+      renderProcessHandler->SendLogMessage(
+          frame, LOGSEVERITY_WARNING,
+          "CurrentEntryChangeHandler ignored unexpected navigationType: " +
+              navigationType);
       return true;
     }
 
-    StateUpdate event;
-    event.source.frameId = frame->GetIdentifier();
-    event.source.isMainFrame = frame->IsMain();
-
-    if (arguments.size() > 0 && arguments[0]->IsString()) {
-      event.url = arguments[0]->GetStringValue();
+    CefRefPtr<CefV8Value> globalObject = context->GetGlobal();
+    CefRefPtr<CefV8Value> navigationObject =
+        globalObject->GetValue("navigation");
+    if (!navigationObject || !navigationObject->IsObject()) {
+      return true;
     }
 
-    std::string historyOption = "auto";
-    if (arguments.size() > 1 && arguments[1]->IsObject()) {
-      event.state = CefV8ValueToCefValue(arguments[1]->GetValue("state"));
-      CefRefPtr<CefV8Value> historyVal = arguments[1]->GetValue("history");
-      if (historyVal && historyVal->IsString()) {
-        historyOption = historyVal->GetStringValue().ToString();
-      }
-    } else {
-      event.state = CefV8ValueToCefValue(nullptr);
+    CefRefPtr<CefV8Value> currentEntry =
+        navigationObject->GetValue("currentEntry");
+    if (!currentEntry || !currentEntry->IsObject()) {
+      return true;
     }
 
-    CefString method =
-        (historyOption == "replace" ||
-         (historyOption == "auto" && event.url == frame->GetURL().ToString()))
-            ? "OnReplaceState"
-            : "OnPushState";
+    CefString url = currentEntry->GetValue("url")->GetStringValue();
 
-    renderProcessHandler->SendStateUpdate(frame, method, event);
+    CefRefPtr<CefV8Value> stateValue = nullptr;
+    CefRefPtr<CefV8Value> getStateFunction = currentEntry->GetValue("getState");
+    if (getStateFunction && getStateFunction->IsFunction()) {
+      CefV8ValueList emptyArguments;
+      stateValue =
+          getStateFunction->ExecuteFunction(currentEntry, emptyArguments);
+    }
+
+    StateUpdate stateUpdate;
+    stateUpdate.source.frameId = frame->GetIdentifier();
+    stateUpdate.source.isMainFrame = frame->IsMain();
+    stateUpdate.url = url.ToString();
+    stateUpdate.state = CefV8ValueToCefValue(stateValue);
+
+    renderProcessHandler->SendStateUpdate(frame, navigationType, stateUpdate);
     return true;
   }
 
  private:
   CefRefPtr<RenderProcessHandler> renderProcessHandler;
-  CefRefPtr<CefV8Value> originalFunction;
 
-  IMPLEMENT_REFCOUNTING(NavigationNavigateOverrides);
-};
-
-class HistoryStateOverrides : public CefV8Handler {
- public:
-  HistoryStateOverrides(
-      CefRefPtr<RenderProcessHandler> renderProcessHandler,
-      CefRefPtr<CefV8Value> originalFunction,
-      const std::string& action)
-      : renderProcessHandler(renderProcessHandler),
-        originalFunction(originalFunction),
-        action(action) {}
-
-  virtual bool Execute(const CefString& name,
-                       CefRefPtr<CefV8Value> object,
-                       const CefV8ValueList& arguments,
-                       CefRefPtr<CefV8Value>& retval,
-                       CefString& exception) override {
-    CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
-    CefRefPtr<CefFrame> frame = context->GetFrame();
-
-    retval = originalFunction->ExecuteFunction(object, arguments);
-    if (!retval) {
-      return true;
-    }
-
-    StateUpdate event;
-    event.source.frameId = frame->GetIdentifier();
-    event.source.isMainFrame = frame->IsMain();
-    CefString method = (action == "pushState") ? "OnPushState" : "OnReplaceState";
-    event.state = CefV8ValueToCefValue(arguments.size() > 0 ? arguments[0] : nullptr);
-    if (arguments.size() > 2 && arguments[2]->IsString()) {
-      event.url = arguments[2]->GetStringValue();
-    }
-
-    renderProcessHandler->SendStateUpdate(frame, method, event);
-    return true;
-  }
-
- private:
-  CefRefPtr<RenderProcessHandler> renderProcessHandler;
-  CefRefPtr<CefV8Value> originalFunction;
-  std::string action;
-
-  IMPLEMENT_REFCOUNTING(HistoryStateOverrides);
+  IMPLEMENT_REFCOUNTING(CurrentEntryChangeHandler);
 };
 
 class HashChangeHandler : public CefV8Handler {
@@ -533,8 +506,17 @@ void RenderProcessHandler::OnContextCreated(CefRefPtr<CefBrowser> browser,
   // navigation
   CefRefPtr<CefV8Value> navigation = window->GetValue("navigation");
   if (navigation && navigation->IsObject()) {
+    // current entry change
+    CefRefPtr<CefV8Handler> entryChangeHandler =
+        new CurrentEntryChangeHandler(this);
+    CefV8ValueList entryChangeArgs;
+    entryChangeArgs.push_back(CefV8Value::CreateString("currententrychange"));
+    entryChangeArgs.push_back(
+        CefV8Value::CreateFunction("onCurrentEntryChange", entryChangeHandler));
+    navigation->GetValue("addEventListener")
+        ->ExecuteFunction(navigation, entryChangeArgs);
 
-    // navigation traverse overrides
+    // navigation traversals
     CefRefPtr<CefV8Handler> navigationOverridesHandler =
         new NavigationTraversalOverrides(this);
     navigation->SetValue(
@@ -548,19 +530,9 @@ void RenderProcessHandler::OnContextCreated(CefRefPtr<CefBrowser> browser,
         "traverseTo",
         CefV8Value::CreateFunction("traverseTo", navigationOverridesHandler),
         V8_PROPERTY_ATTRIBUTE_NONE);
-
-    // navigation navigate override
-    CefRefPtr<CefV8Value> originalNavigate = navigation->GetValue("navigate");
-    if (originalNavigate && originalNavigate->IsFunction()) {
-      navigation->SetValue(
-          "navigate",
-          CefV8Value::CreateFunction(
-              "navigate", new NavigationNavigateOverrides(this, originalNavigate)),
-          V8_PROPERTY_ATTRIBUTE_NONE);
-    }
   }
 
-  // history traverse overrides
+  // history traversals
   CefRefPtr<CefV8Value> history = window->GetValue("history");
   if (history && history->IsObject()) {
     CefRefPtr<CefV8Handler> historyOverridesHandler =
@@ -575,29 +547,9 @@ void RenderProcessHandler::OnContextCreated(CefRefPtr<CefBrowser> browser,
     history->SetValue("go",
                       CefV8Value::CreateFunction("go", historyOverridesHandler),
                       V8_PROPERTY_ATTRIBUTE_NONE);
-
-    // history state overrides
-    CefRefPtr<CefV8Value> originalPushState = history->GetValue("pushState");
-    if (originalPushState && originalPushState->IsFunction()) {
-      history->SetValue("pushState",
-                        CefV8Value::CreateFunction(
-                            "pushState", new HistoryStateOverrides(
-                                             this, originalPushState, "pushState")),
-                        V8_PROPERTY_ATTRIBUTE_NONE);
-    }
-
-    CefRefPtr<CefV8Value> originalReplaceState = history->GetValue("replaceState");
-    if (originalReplaceState && originalReplaceState->IsFunction()) {
-      history->SetValue(
-          "replaceState",
-          CefV8Value::CreateFunction(
-              "replaceState", new HistoryStateOverrides(
-                                  this, originalReplaceState, "replaceState")),
-          V8_PROPERTY_ATTRIBUTE_NONE);
-    }
   }
 
-  // hash changes
+  // hash change
   CefRefPtr<CefV8Handler> hashChangeHandler = new HashChangeHandler(this);
   CefV8ValueList hashArgs;
   hashArgs.push_back(CefV8Value::CreateString("hashchange"));
